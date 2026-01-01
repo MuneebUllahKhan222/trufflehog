@@ -16,8 +16,10 @@ type SqlServerJDBC struct {
 }
 
 func (s *SqlServerJDBC) ping(ctx context.Context) pingResult {
+	fmt.Println("Ping called")
 	return ping(ctx, "mssql", isSqlServerErrorDeterminate,
-		BuildSQLServerConnectionString(s.Host, s.User, s.Password, "master", map[string]string{"connection+timeout": "5"}))
+		BuildSQLServerConnectionString(s.Host, s.User, s.Password, "master", map[string]string{"connection+timeout": "5", "trustservercertificate": "true"}))
+	// BuildSQLServerConnectionString(s.Host, s.User, s.Password, "master", map[string]string{"connection+timeout": "5", "trustservercertificate": "true"}))
 }
 
 func isSqlServerErrorDeterminate(err error) bool {
@@ -35,10 +37,13 @@ func isSqlServerErrorDeterminate(err error) bool {
 }
 
 func ParseSqlServer(ctx logContext.Context, subname string) (jdbc, error) {
+	fmt.Println("subname:", subname)
+	// //odbc:server=localhost;port=59754;database=master;password=43Kk7Q90RJ
 	if !strings.HasPrefix(subname, "//") {
 		return nil, errors.New("expected connection to start with //")
 	}
 	conn := strings.TrimPrefix(subname, "//")
+	// odbc:server=localhost;port=59754;database=master;password=43Kk7Q90RJ
 
 	port := "1433"
 	user := "sa"
@@ -47,9 +52,10 @@ func ParseSqlServer(ctx logContext.Context, subname string) (jdbc, error) {
 	params := make(map[string]string)
 
 	for i, param := range strings.Split(conn, ";") {
+		// odbc:server=localhost  port=59754  database=master  password=43Kk7Q90RJ
 		key, value, found := strings.Cut(param, "=")
+		// key: odbc:server  value: localhost   key: port  value: 59754  key: database  value: master  key: password  value: 43Kk7Q90RJ
 		if !found && i == 0 {
-			//  String connectionUrl = "jdbc:sqlserver://<server>:<port>;encrypt=true;databaseName=AdventureWorks;user=<user>;password=<password>";
 			if split := strings.Split(param, ":"); len(split) > 1 {
 				host = split[0]
 				port = split[1]
@@ -57,6 +63,11 @@ func ParseSqlServer(ctx logContext.Context, subname string) (jdbc, error) {
 				host = param
 			}
 			continue
+		}
+
+		// incase there is a driver with host e.g odbc:server
+		if split := strings.Split(key, ":"); len(split) > 1 {
+			key = split[1]
 		}
 
 		switch strings.ToLower(key) {
@@ -100,5 +111,6 @@ func BuildSQLServerConnectionString(host, user, password, database string, param
 			conn += fmt.Sprintf("&%s=%s", k, v)
 		}
 	}
+	fmt.Printf("Conn str is %v \n", conn)
 	return conn
 }
