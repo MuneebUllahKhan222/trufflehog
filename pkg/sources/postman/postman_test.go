@@ -163,6 +163,101 @@ func TestSource_ScanCollection(t *testing.T) {
 	}
 }
 
+func TestSource_ScanCollectionWithFolders(t *testing.T) {
+	ctx := context.Background()
+	s := &Source{
+		DetectorKeywords: map[string]struct{}{
+			"keyword1": {},
+		},
+		keywords: map[string]struct{}{
+			"keyword1": {},
+		},
+	}
+	testCollection := Collection{
+		Info: Info{
+			PostmanID: "col1",
+			Name:      "Test Collection with Folders",
+		},
+		Items: []Item{
+			{
+				Name: "Folder 1",
+				Items: []Item{
+					{
+						Uid:  "1",
+						Name: "Request 1",
+						Request: Request{
+							URL: URL{
+								Protocol: "https",
+								Host:     []string{"example.com"},
+								Path:     []string{"api", "endpoint"},
+								Raw:      "https://example.com/api/endpoint",
+							},
+							Method: "GET",
+						},
+					},
+					{
+						Uid:  "2",
+						Name: "Folder1",
+						Items: []Item{
+							{
+								Uid:  "3",
+								Name: "Request 2",
+								Request: Request{
+									URL: URL{
+										Protocol: "https",
+										Host:     []string{"test.com"},
+										Path:     []string{"api", "endpoint1"},
+										Raw:      "https://test.com/api/endpoint",
+									},
+									Method: "POST",
+									Auth: Auth{
+										Type: "bearer",
+										Bearer: []KeyValue{
+											{
+												Key:   "token",
+												Value: "abcdef123456",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	expectedChunks := []string{
+		"keyword1:https://example.com/api/endpoint\n",
+		"",
+		"",
+	}
+
+	chunksChan := make(chan *sources.Chunk, len(expectedChunks))
+	metadata := Metadata{
+		CollectionInfo: testCollection.Info,
+	}
+
+	go s.scanCollection(ctx, chunksChan, metadata, testCollection)
+
+	for _, expectedData := range expectedChunks {
+		chunk := <-chunksChan
+
+		// can't guarantee order of keywords in chunk data
+		// so we need to compare the data after sorting
+		got := strings.Split(strings.TrimSpace(string(chunk.Data)), "\n")
+		fmt.Printf("Chunk received is %v\n", got)
+		expected := strings.Split(strings.TrimSpace(expectedData), "\n")
+		sort.Strings(got)
+		sort.Strings(expected)
+
+		if !reflect.DeepEqual(got, expected) {
+			t.Errorf("expected chunk data from collection: \n%sgot: \n%s", expectedData, chunk.Data)
+		}
+	}
+}
+
 func TestSource_ScanVariableData(t *testing.T) {
 	ctx := context.Background()
 	s := &Source{
