@@ -24,6 +24,7 @@ import (
 )
 
 const SourceType = sourcespb.SourceType_SOURCE_TYPE_FILESYSTEM
+const defaultSymlinkMaxDepth = 40
 
 type Source struct {
 	name         string
@@ -37,6 +38,9 @@ type Source struct {
 	skipBinaries bool
 	sources.Progress
 	sources.CommonSourceUnitUnmarshaller
+	followSymlinks  bool
+	symlinkMaxDepth int
+	visitedPaths    map[string]struct{}
 }
 
 // Ensure the Source satisfies the interfaces at compile time
@@ -80,12 +84,46 @@ func (s *Source) Init(aCtx context.Context, name string, jobId sources.JobID, so
 		return fmt.Errorf("unable to create filter: %w", err)
 	}
 	s.filter = filter
+	fmt.Printf("Scanning filesystem with config: %v\n", conn.GetFollowSymlink())
+	s.followSymlinks = conn.GetFollowSymlink()
+	s.symlinkMaxDepth = int(conn.GetSymlinkMaxDepth())
+	if s.followSymlinks && s.symlinkMaxDepth <= 0 {
+		s.symlinkMaxDepth = defaultSymlinkMaxDepth
+	}
 
 	return nil
 }
 
+var symlinkDepthExceededErr = errors.New("symlink depth exceeded")
+
+// EvalSymlinksWithDepth resolves symlinks up to a maximum depth.
+func EvalSymlinksWithDepth(path string, maxDepth int) (string, error) {
+	current := path
+	for i := 0; i < maxDepth; i++ {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return current, nil
+		}
+		target, err := os.Readlink(current)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(current), target)
+		}
+		current = filepath.Clean(target)
+	}
+	return "", symlinkDepthExceededErr
+}
+
 // Chunks emits chunks of bytes over a channel.
 func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, _ ...sources.ChunkingTarget) error {
+	fmt.Println("Chunks called")
+	s.visitedPaths = make(map[string]struct{})
+
 	for i, path := range s.paths {
 		logger := ctx.Logger().WithValues("path", path)
 		if common.IsDone(ctx) {
@@ -94,20 +132,32 @@ func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, _ .
 		s.SetProgressComplete(i, len(s.paths), fmt.Sprintf("Path: %s", path), "")
 
 		cleanPath := filepath.Clean(path)
-		fileInfo, err := os.Lstat(cleanPath)
+		fileInfo, err := os.Stat(cleanPath)
 		if err != nil {
 			logger.Error(err, "unable to get file info")
 			continue
 		}
 
-		if fileInfo.Mode()&os.ModeSymlink != 0 {
-			logger.Info("skipping, not a regular file", "path", cleanPath)
-			continue
-		}
-
+		// if fileInfo.Mode()&os.ModeSymlink != 0 {
+		// 	if !s.followSymlinks {
+		// 		logger.Info("skipping, not a regular file", "path", cleanPath)
+		// 		continue
+		// 	}
+		// 	cleanPath, err = EvalSymlinksWithDepth(cleanPath, s.symlinkMaxDepth)
+		// 	if err != nil {
+		// 		if errors.Is(err, symlinkDepthExceededErr) {
+		// 			logger.Error(err, "symlink max depth exceeded")
+		// 		} else {
+		// 			logger.Error(err, "unable to resolve symlink")
+		// 		}
+		// 		continue
+		// 	}
+		// }
+		fmt.Printf("File info for path %v is %+v\n", cleanPath, fileInfo)
 		if fileInfo.IsDir() {
 			err = s.scanDir(ctx, cleanPath, chunksChan)
 		} else {
+			s.visitedPaths[cleanPath] = struct{}{}
 			err = s.scanFile(ctx, cleanPath, chunksChan)
 		}
 
@@ -132,11 +182,13 @@ func (s *Source) scanDir(ctx context.Context, path string, chunksChan chan *sour
 
 	return fs.WalkDir(os.DirFS(path), ".", func(relativePath string, d fs.DirEntry, err error) error {
 		if err != nil {
+			fmt.Printf("Error occured %v\n", err)
 			ctx.Logger().Error(err, "error walking directory")
 			return nil
 		}
 
 		fullPath := filepath.Join(path, relativePath)
+		fmt.Printf("Full path is %v\n", fullPath)
 
 		// check if the full path is not matching any pattern in include FilterRuleSet and matching any exclude FilterRuleSet.
 		if s.filter != nil && !s.filter.Pass(fullPath) {
@@ -146,6 +198,12 @@ func (s *Source) scanDir(ctx context.Context, path string, chunksChan chan *sour
 			}
 
 			return nil // skip the file
+		}
+
+		if d.Type()&os.ModeSymlink != 0 && s.followSymlinks {
+			fmt.Printf("Full path %v is a nested symlink\n", fullPath)
+			ctx.Logger().V(5).Info("resolving nested symlink", "path", fullPath)
+			return s.scanDir(ctx, fullPath, chunksChan)
 		}
 
 		// Skip over non-regular files. We do this check here to suppress noisy

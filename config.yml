@@ -1,0 +1,10 @@
+sources:
+- connection:
+    '@type': type.googleapis.com/sources.Filesystem
+    paths:
+    - C:\A
+    followSymlink: true
+    symlinkMaxDepth: 5
+  name: Filesystem
+  type: SOURCE_TYPE_FILESYSTEM
+  verify: false

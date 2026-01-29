@@ -1703,6 +1703,10 @@ func (m *Filesystem) validate(all bool) error {
 
 	// no validation rules for SkipBinaries
 
+	// no validation rules for FollowSymlink
+
+	// no validation rules for SymlinkMaxDepth
+
 	if len(errors) > 0 {
 		return FilesystemMultiError(errors)
 	}

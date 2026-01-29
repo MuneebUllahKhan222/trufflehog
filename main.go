@@ -705,6 +705,7 @@ func runSingleScan(ctx context.Context, cmd string, cfg engine.Config) (metrics,
 		sources.WithConcurrentSources(cfg.Concurrency),
 		sources.WithConcurrentUnits(cfg.Concurrency),
 		sources.WithSourceUnits(),
+		// sources.WithSourceUnits(),
 		sources.WithBufferedOutput(defaultOutputBufferSize),
 	}
 

@@ -431,6 +431,7 @@ func handleChunksWithError(
 			if len(dataOrErr.Data) > 0 {
 				chunk := *chunkSkel
 				chunk.Data = dataOrErr.Data
+				fmt.Printf("Data is %v\n", string(chunk.Data))
 				populateChunkLineNumber(&chunk, dataOrErr.LineNumber)
 
 				if err := reporter.ChunkOk(ctx, chunk); err != nil {
